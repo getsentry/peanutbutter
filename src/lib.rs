@@ -4,6 +4,9 @@ use std::time::Duration;
 
 use quanta::{Clock, Instant};
 
+/// The budgeting configuration.
+///
+/// This determines the window, buckets, and the allowed budget for each project.
 #[derive(Debug)]
 pub struct BudgetingConfig {
     /// The "backoff" duration within which no flip-flopping of the "exceeded" state happens.
@@ -48,6 +51,7 @@ impl BudgetingConfig {
         }
     }
 
+    /// Overrides the [`Timer`] that is being used by this configuration.
     #[cfg(test)]
     fn with_timer(mut self, timer: Timer) -> Self {
         self.timer = timer;
@@ -60,6 +64,7 @@ impl BudgetingConfig {
     }
 }
 
+/// A [`Timer`] that is mockable and allows us to get a truncated [`Instant`].
 #[derive(Debug)]
 pub struct Timer {
     /// The [`Clock`] thats being used for this timer.
@@ -75,7 +80,7 @@ impl Timer {
         Self { clock, start_time }
     }
 
-    /// Returns [`Instant::now()`] truncated to a multiple of the given [`Duration`].
+    /// Returns [`Instant::recent()`] truncated to a multiple of the given [`Duration`].
     pub fn truncated_now(&self, duration: Duration) -> Instant {
         let now = self.clock.recent();
 
@@ -88,6 +93,10 @@ impl Timer {
     }
 }
 
+/// Per-project (per-anything, really) budget tracking.
+///
+/// This allows the recorded budget to be recorded, and allows checking whether
+/// the total budget (within the configured time window) has been exceeded.
 #[derive(Debug)]
 pub struct ProjectStats {
     /// Configuration that governs the budgeting and bucketing.
@@ -104,6 +113,7 @@ pub struct ProjectStats {
 }
 
 impl ProjectStats {
+    /// Create a new per-project tracker based on the given [`BudgetingConfig`].
     pub fn new(config: Arc<BudgetingConfig>) -> Self {
         let budget_buckets = VecDeque::with_capacity(config.num_buckets);
         Self {
