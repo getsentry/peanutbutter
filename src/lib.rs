@@ -184,8 +184,6 @@ impl ProjectStats {
 
 #[cfg(test)]
 mod tests {
-    use quanta::Clock;
-
     use super::*;
 
     #[test]
