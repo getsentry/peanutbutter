@@ -1,254 +1,137 @@
-use std::collections::VecDeque;
+mod config;
+mod stats;
+
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
-use quanta::{Clock, Instant};
+pub use config::BudgetingConfig;
+use config::Timer;
+use dashmap::mapref::one::RefMut;
+use dashmap::DashMap;
+use indexmap::IndexMap;
+use quanta::Clock;
+pub use stats::ProjectStats;
 
-/// The budgeting configuration.
-///
-/// This determines the window, buckets, and the allowed budget for each project.
+type ProjectBudgets = Arc<DashMap<(usize, u64), ProjectStats>>;
+type ProjectRef<'a> = RefMut<'a, (usize, u64), ProjectStats>;
+
 #[derive(Debug)]
-pub struct BudgetingConfig {
-    /// The "backoff" duration within which no flip-flopping of the "exceeded" state happens.
+pub struct Service {
+    /// The global [`Timer`] used within all the [`BudgetingConfig`]s.
     ///
-    /// In other words, a state change will persist for at least this duration before it changes again.
-    backoff_duration: Duration,
-
-    /// The total time window for which the budgeting happens.
-    budgeting_window: Duration,
-
-    /// The size of each bucket.
-    bucket_size: Duration,
-
-    /// Number of buckets to keep track of
-    num_buckets: usize,
-
-    /// The total allowed budget before a project is flagged as exceeding it.
-    allowed_budget: f64,
-
-    /// The [`Timer`] used to select the proper bucket.
+    /// The timers clock will be updated regularly (for proper [`Clock::recent`] access).
     timer: Timer,
+
+    /// A map of known configurations.
+    ///
+    /// This is a [`IndexMap`] as an optimization, so we do not need to constantly
+    /// [`Arc::clone`] the [`BudgetingConfig`] to index into the main budget map.
+    configs: IndexMap<String, Arc<BudgetingConfig>>,
+
+    /// A concurrent [`DashMap`] containing all the project stats/budgets.
+    project_budgets: ProjectBudgets,
+
+    /// The background thread that updates the [`Timer`] and cleans up stale stats.
+    // TODO: actually implement graceful shutdown
+    #[allow(unused)]
+    maintenance_thread: JoinHandle<()>,
 }
 
-impl BudgetingConfig {
-    /// Creates a new [`BudgetingConfig`] with the provided configuration.
-    pub fn new(
-        backoff_duration: Duration,
-        budgeting_window: Duration,
-        bucket_size: Duration,
-        allowed_budget: f64,
-    ) -> Self {
-        let num_buckets = (budgeting_window.as_secs() / bucket_size.as_secs()) as usize;
-        let timer = Timer::new(Clock::new());
+impl Service {
+    /// Creates a new (empty) Service
+    pub fn new() -> Self {
+        let clock = Clock::new();
+        let timer = Timer::new(clock.clone());
+        let project_budgets = ProjectBudgets::default();
+
+        let maintenance_thread = std::thread::spawn({
+            let project_budgets = project_budgets.clone();
+            move || service_maintenance(clock, project_budgets)
+        });
 
         Self {
-            backoff_duration,
-            budgeting_window,
-            bucket_size,
-            num_buckets,
-            allowed_budget,
             timer,
+            configs: Default::default(),
+            project_budgets,
+            maintenance_thread,
         }
     }
 
-    /// Overrides the [`Timer`] that is being used by this configuration.
-    #[cfg(test)]
-    fn with_timer(mut self, timer: Timer) -> Self {
-        self.timer = timer;
-        self
-    }
-
-    /// Returns the current time, truncated to `bucket_size`.
-    pub fn truncated_now(&self) -> Instant {
-        self.timer.truncated_now(self.bucket_size)
-    }
-}
-
-/// A [`Timer`] that is mockable and allows us to get a truncated [`Instant`].
-#[derive(Debug)]
-pub struct Timer {
-    /// The [`Clock`] thats being used for this timer.
-    clock: Clock,
-    /// Whenever this [`Timer`] was constructed.
-    start_time: Instant,
-}
-
-impl Timer {
-    /// Creates a new [`Timer`]
-    pub fn new(clock: Clock) -> Self {
-        let start_time = clock.recent();
-        Self { clock, start_time }
-    }
-
-    /// Returns [`Instant::recent()`] truncated to a multiple of the given [`Duration`].
-    pub fn truncated_now(&self, duration: Duration) -> Instant {
-        let now = self.clock.recent();
-
-        let elapsed = now - self.start_time;
-        let duration_secs = duration.as_secs();
-        let truncated_offset =
-            Duration::from_secs((elapsed.as_secs() / duration_secs) * duration_secs);
-
-        self.start_time + truncated_offset
-    }
-}
-
-/// Per-project (per-anything, really) budget tracking.
-///
-/// This allows the recorded budget to be recorded, and allows checking whether
-/// the total budget (within the configured time window) has been exceeded.
-#[derive(Debug)]
-pub struct ProjectStats {
-    /// Configuration that governs the budgeting and bucketing.
-    config: Arc<BudgetingConfig>,
-
-    /// Whether this project exceeded its budget.
-    exceeds_budget: bool,
-
-    /// The deadline after which a projects state can change, to avoid rapid flip-flopping.
-    backoff_deadline: Option<Instant>,
-
-    /// The buckets that are used to keep track of the spent budget.
-    budget_buckets: VecDeque<(Instant, f64)>,
-}
-
-impl ProjectStats {
-    /// Create a new per-project tracker based on the given [`BudgetingConfig`].
-    pub fn new(config: Arc<BudgetingConfig>) -> Self {
-        let budget_buckets = VecDeque::with_capacity(config.num_buckets);
-        Self {
-            config,
-            exceeds_budget: false,
-            backoff_deadline: None,
-            budget_buckets,
-        }
+    /// Add/register a new [`BudgetingConfig`] with a specific name.
+    ///
+    /// This function will `panic` when a duplicated config is provided.
+    /// The intention is to only add configuration once on startup,
+    /// and `panic`-ing in that situation is considered acceptable.
+    pub fn add_config(&mut self, name: &str, config: BudgetingConfig) {
+        let config = Arc::new(config.with_timer(self.timer.clone()));
+        let previous = self.configs.insert(name.into(), config);
+        assert!(previous.is_none());
     }
 
     /// Checks whether this project exceeds its budgets.
     ///
     /// This will also update internal state when checking.
-    pub fn exceeds_budget(&mut self) -> bool {
-        self.update_aggregated_state(self.config.truncated_now())
+    pub fn exceeds_budget(&self, config: &str, project_id: u64) -> bool {
+        if let Some(mut stats) = self.get_project_stats(config, project_id) {
+            stats.exceeds_budget()
+        } else {
+            false
+        }
     }
 
     /// Records spent budget.
     ///
     /// This will also update internal state when checking.
-    pub fn record_budget_spend(&mut self, spent_budget: f64) -> bool {
-        let now = self.config.truncated_now();
-
-        if let Some(latest) = self.budget_buckets.front_mut() {
-            if latest.0 >= now {
-                latest.1 += spent_budget;
-            } else {
-                if self.budget_buckets.len() >= self.config.num_buckets {
-                    self.budget_buckets.pop_back();
-                }
-                self.budget_buckets.push_front((now, spent_budget));
-            }
+    pub fn record_budget_spend(&self, config: &str, project_id: u64, spent_budget: f64) -> bool {
+        if let Some(mut stats) = self.get_project_stats(config, project_id) {
+            stats.record_budget_spend(spent_budget)
         } else {
-            self.budget_buckets.push_front((now, spent_budget));
+            false
         }
-
-        self.update_aggregated_state(now)
     }
 
-    /// Updates the internal state, calculating whether this project exceeds its budget.
-    ///
-    /// On state update, this will register a "backoff" timer to avoid rapid flip-flopping.
-    fn update_aggregated_state(&mut self, now: Instant) -> bool {
-        if let Some(deadline) = self.backoff_deadline {
-            if deadline > now {
-                return self.exceeds_budget;
-            }
-            self.backoff_deadline = None;
-        }
+    /// Gets a mutable [`ProjectStats`] reference from the concurrent [`DashMap`].
+    fn get_project_stats(&self, config: &str, project_id: u64) -> Option<ProjectRef> {
+        let (config_idx, _name, config) = self.configs.get_full(config)?;
+        let key = (config_idx, project_id);
 
-        let lowest_time = now - self.config.budgeting_window;
-        let total_spent_budget: f64 = self
-            .budget_buckets
-            .iter()
-            .filter_map(|b| (b.0 >= lowest_time).then_some(b.1))
-            .sum();
+        let entry = self
+            .project_budgets
+            .entry(key)
+            .or_insert_with(|| ProjectStats::new(config.clone()));
 
-        let exceeds_budget = total_spent_budget > self.config.allowed_budget;
-
-        if self.exceeds_budget != exceeds_budget {
-            self.exceeds_budget = exceeds_budget;
-            self.backoff_deadline = Some(now + self.config.backoff_duration);
-        }
-
-        exceeds_budget
+        Some(entry)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_truncated_time() {
-        let (clock, mock) = Clock::mock();
-        mock.increment(Duration::from_millis(500));
-        let timer = Timer::new(clock);
-
-        let duration = Duration::from_secs(1);
-        let now = timer.truncated_now(duration);
-
-        mock.increment(Duration::from_millis(750));
-
-        let still_now = timer.truncated_now(duration);
-        assert_eq!(now, still_now);
-
-        mock.increment(Duration::from_millis(750));
-
-        let advanced_now = timer.truncated_now(duration);
-        assert!(advanced_now > now);
-        assert_eq!(advanced_now.duration_since(now), duration);
+impl Default for Service {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    #[test]
-    fn test_budgeting() {
-        let (clock, mock) = Clock::mock();
-        mock.increment(Duration::from_secs(100));
+/// A background maintenance task that periodically updates the [`Clock`],
+/// and cleans up state [`ProjectStats`].
+fn service_maintenance(clock: Clock, project_budgets: ProjectBudgets) {
+    // We scan the map, and clean up stale entries in two phases.
+    // The [`DashMap`] docs specifically mention that certain operations can deadlock,
+    // such as iterating and calling `remove_if` at the same time.
+    let mut keys_needing_cleanup = vec![];
 
-        let config = BudgetingConfig::new(
-            Duration::from_secs(10),
-            Duration::from_secs(5),
-            Duration::from_secs(1),
-            100.,
-        )
-        .with_timer(Timer::new(clock));
+    loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let now = clock.now();
+        quanta::set_recent(now);
 
-        let mut stats = ProjectStats::new(Arc::new(config));
+        for entry in project_budgets.iter() {
+            if entry.value().is_stale(now) {
+                keys_needing_cleanup.push(*entry.key());
+            }
+        }
 
-        stats.record_budget_spend(40.);
-        let is_blocked = stats.record_budget_spend(10.);
-        assert!(!is_blocked);
-
-        mock.increment(Duration::from_millis(1500));
-
-        let is_blocked = stats.record_budget_spend(45.);
-        assert!(!is_blocked);
-
-        mock.increment(Duration::from_millis(750));
-
-        let is_blocked = stats.record_budget_spend(10.);
-        assert!(is_blocked);
-
-        mock.increment(Duration::from_secs(6));
-
-        // The budgeting window itself is already passed, but we are in backoff
-        assert!(stats.exceeds_budget());
-
-        mock.increment(Duration::from_secs(3));
-
-        // The budgeting window itself is already passed, but we are in backoff
-        assert!(stats.exceeds_budget());
-
-        mock.increment(Duration::from_secs(2));
-
-        // the backoff deadline has passed, we are unblocked
-        assert!(!stats.exceeds_budget());
+        for key in keys_needing_cleanup.drain(..) {
+            project_budgets.remove_if(&key, |_k, stats| stats.is_stale(now));
+        }
     }
 }

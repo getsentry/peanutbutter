@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+dashmap = "5.5.3"
+indexmap = "2.2.5"
 quanta = "0.12.2"
