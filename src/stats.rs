@@ -49,17 +49,13 @@ impl ProjectStats {
     pub fn record_budget_spend(&mut self, spent_budget: f64) -> bool {
         let now = self.config.truncated_now();
 
-        if let Some(latest) = self.budget_buckets.front_mut() {
-            if latest.0 >= now {
-                latest.1 += spent_budget;
-            } else {
-                if self.budget_buckets.len() >= self.config.num_buckets {
-                    self.budget_buckets.pop_back();
-                }
-                self.budget_buckets.push_front((now, spent_budget));
-            }
-        } else {
-            self.budget_buckets.push_front((now, spent_budget));
+        match self.budget_buckets.front_mut() {
+            Some(latest) if latest.0 >= now => latest.1 += spent,
+            _ => self.budget_buckets.push_front((now, spent)),
+        }
+
+        if self.budget_buckets.len() > self.config.num_buckets {
+            self.budget_buckets.pop_back();
         }
 
         self.update_aggregated_state(now)
@@ -77,7 +73,7 @@ impl ProjectStats {
         }
 
         let lowest_time = now - self.config.budgeting_window;
-        self.budget_buckets.iter().any(|b| b.0 >= lowest_time)
+        self.budget_buckets.iter().all(|b| b.0 < earliest_time)
     }
 
     /// Updates the internal state, calculating whether this project exceeds its budget.
