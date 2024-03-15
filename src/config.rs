@@ -19,7 +19,7 @@ pub struct BudgetingConfig {
     pub bucket_size: Duration,
 
     /// The budget assigned to each project.
-    pub allowed_budget: f64,
+    pub budget: f64,
 
     /// The number of time buckets to keep track of.
     ///
@@ -36,7 +36,7 @@ impl BudgetingConfig {
         backoff_duration: Duration,
         budgeting_window: Duration,
         bucket_size: Duration,
-        allowed_budget: f64,
+        budget: f64,
     ) -> Self {
         // Note: this is only correct if bucket_size divides budgeting_window
         let num_buckets = (budgeting_window.as_micros() / bucket_size.as_micros()) as usize;
@@ -47,7 +47,7 @@ impl BudgetingConfig {
             budgeting_window,
             bucket_size,
             num_buckets,
-            allowed_budget,
+            budget,
             timer,
         }
     }

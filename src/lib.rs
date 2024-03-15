@@ -84,9 +84,9 @@ impl Service {
     }
 
     /// Records spent budget.
-    pub fn record_budget_spend(&self, config: &str, project_id: u64, spent_budget: f64) -> bool {
+    pub fn record_spending(&self, config: &str, project_id: u64, spent: f64) -> bool {
         if let Some(mut stats) = self.get_project_stats(config, project_id, true) {
-            stats.record_budget_spend(spent_budget)
+            stats.record_spending(spent)
         } else {
             false
         }

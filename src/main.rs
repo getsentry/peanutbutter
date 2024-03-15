@@ -3,7 +3,7 @@ use std::time::Duration;
 use tonic::{transport::Server, Request, Response, Status};
 
 use proto::project_budgets_server::{ProjectBudgets, ProjectBudgetsServer};
-use proto::{ExceedsBudgetReply, ExceedsBudgetRequest, RecordBudgetSpendRequest};
+use proto::{ExceedsBudgetReply, ExceedsBudgetRequest, RecordSpendingRequest};
 
 mod proto {
     tonic::include_proto!("project_budget");
@@ -64,19 +64,17 @@ impl ProjectBudgets for GrpcService {
         Ok(Response::new(ExceedsBudgetReply { exceeds_budget }))
     }
 
-    async fn record_budget_spend(
+    async fn record_spending(
         &self,
-        request: Request<RecordBudgetSpendRequest>,
+        request: Request<RecordSpendingRequest>,
     ) -> Result<Response<ExceedsBudgetReply>, Status> {
-        let RecordBudgetSpendRequest {
+        let RecordSpendingRequest {
             config_name,
             project_id,
-            spent_budget,
+            spent,
         } = request.into_inner();
 
-        let exceeds_budget = self
-            .inner
-            .record_budget_spend(&config_name, project_id, spent_budget);
+        let exceeds_budget = self.inner.record_spending(&config_name, project_id, spent);
 
         Ok(Response::new(ExceedsBudgetReply { exceeds_budget }))
     }
