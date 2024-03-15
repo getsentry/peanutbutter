@@ -12,10 +12,10 @@ pub struct BudgetingConfig {
     /// In other words, a state change will persist for at least this duration before it changes again.
     pub backoff_duration: Duration,
 
-    /// The total time window for which the budgeting happens.
+    /// Length of the sliding budgeting window.
     pub budgeting_window: Duration,
 
-    /// The size of each bucket.
+    /// The size of the buckets that spent budget is sorted into.
     pub bucket_size: Duration,
 
     /// The total allowed budget before a project is flagged as exceeding it.

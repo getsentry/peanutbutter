@@ -1,0 +1,22 @@
+syntax = "proto3";
+package project_budget;
+
+service ProjectBudgets {
+    rpc ExceedsBudget (ExceedsBudgetRequest) returns (ExceedsBudgetReply);
+    rpc RecordBudgetSpend (RecordBudgetSpendRequest) returns (ExceedsBudgetReply);
+}
+
+message ExceedsBudgetRequest {
+    string config_name = 1;
+    uint64 project_id = 2;
+}
+
+message RecordBudgetSpendRequest {
+    string config_name = 1;
+    uint64 project_id = 2;
+    double spent_budget = 3;
+}
+
+message ExceedsBudgetReply {
+    bool exceeds_budget = 1;
+}
