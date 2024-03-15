@@ -73,8 +73,7 @@ impl Service {
 
     /// Checks whether this project exceeds its budgets.
     ///
-    /// This will also update internal state when checking.
-    /// An project that is not (yet) known will always return `false`,
+    /// A project that is not (yet) known will always return `false`,
     /// meaning it does not exceed the budget.
     pub fn exceeds_budget(&self, config: &str, project_id: u64) -> bool {
         if let Some(mut stats) = self.get_project_stats(config, project_id, false) {
@@ -85,8 +84,6 @@ impl Service {
     }
 
     /// Records spent budget.
-    ///
-    /// This will also update internal state when checking.
     pub fn record_budget_spend(&self, config: &str, project_id: u64, spent_budget: f64) -> bool {
         if let Some(mut stats) = self.get_project_stats(config, project_id, true) {
             stats.record_budget_spend(spent_budget)

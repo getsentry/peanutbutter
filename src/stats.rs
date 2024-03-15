@@ -14,7 +14,7 @@ pub struct ProjectStats {
     /// Configuration that governs the budgeting and bucketing.
     config: Arc<BudgetingConfig>,
 
-    /// Whether this project exceeded its budget.
+    /// Whether this project exceeds its budget in the current window.
     exceeds_budget: bool,
 
     /// The deadline after which a projects state can change, to avoid rapid flip-flopping.
@@ -37,8 +37,6 @@ impl ProjectStats {
     }
 
     /// Checks whether this project exceeds its budgets.
-    ///
-    /// This will also update internal state when checking.
     pub fn exceeds_budget(&mut self) -> bool {
         self.update_aggregated_state(self.config.truncated_now())
     }
@@ -76,7 +74,7 @@ impl ProjectStats {
         self.budget_buckets.iter().all(|b| b.0 < earliest_time)
     }
 
-    /// Updates the internal state, calculating whether this project exceeds its budget.
+    /// Checks whether this project exceeds its allotted budget.
     ///
     /// On state update, this will register a "backoff" timer to avoid rapid flip-flopping.
     fn update_aggregated_state(&mut self, now: Instant) -> bool {
