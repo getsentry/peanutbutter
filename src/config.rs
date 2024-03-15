@@ -36,7 +36,7 @@ impl BudgetingConfig {
         bucket_size: Duration,
         allowed_budget: f64,
     ) -> Self {
-        let num_buckets = (budgeting_window.as_secs() / bucket_size.as_secs()) as usize;
+        let num_buckets = (budgeting_window.as_micros() / bucket_size.as_micros()) as usize;
         let timer = Timer::new(Clock::new());
 
         Self {
@@ -82,9 +82,9 @@ impl Timer {
         let now = self.clock.recent();
 
         let elapsed = now - self.start_time;
-        let duration_secs = duration.as_secs();
+        let duration_secs = duration.as_micros() as u64;
         let truncated_offset =
-            Duration::from_secs((elapsed.as_secs() / duration_secs) * duration_secs);
+            Duration::from_micros((elapsed.as_micros() as u64 / duration_secs) * duration_secs);
 
         self.start_time + truncated_offset
     }

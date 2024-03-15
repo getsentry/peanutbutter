@@ -7,6 +7,7 @@ use std::time::Duration;
 
 pub use config::BudgetingConfig;
 use config::Timer;
+use dashmap::mapref::entry::Entry;
 use dashmap::mapref::one::RefMut;
 use dashmap::DashMap;
 use indexmap::IndexMap;
@@ -42,6 +43,7 @@ impl Service {
     /// Creates a new (empty) Service
     pub fn new() -> Self {
         let clock = Clock::new();
+        quanta::set_recent(clock.now());
         let timer = Timer::new(clock.clone());
         let project_budgets = ProjectBudgets::default();
 
@@ -75,7 +77,7 @@ impl Service {
     /// An project that is not (yet) known will always return `false`,
     /// meaning it does not exceed the budget.
     pub fn exceeds_budget(&self, config: &str, project_id: u64) -> bool {
-        if let Some(mut stats) = self.get_project_stats(config, project_id) {
+        if let Some(mut stats) = self.get_project_stats(config, project_id, false) {
             stats.exceeds_budget()
         } else {
             false
@@ -86,7 +88,7 @@ impl Service {
     ///
     /// This will also update internal state when checking.
     pub fn record_budget_spend(&self, config: &str, project_id: u64, spent_budget: f64) -> bool {
-        if let Some(mut stats) = self.get_project_stats(config, project_id) {
+        if let Some(mut stats) = self.get_project_stats(config, project_id, true) {
             stats.record_budget_spend(spent_budget)
         } else {
             false
@@ -94,16 +96,20 @@ impl Service {
     }
 
     /// Gets a mutable [`ProjectStats`] reference from the concurrent [`DashMap`].
-    fn get_project_stats(&self, config: &str, project_id: u64) -> Option<ProjectRef> {
+    fn get_project_stats(
+        &self,
+        config: &str,
+        project_id: u64,
+        or_insert: bool,
+    ) -> Option<ProjectRef> {
         let (config_idx, _name, config) = self.configs.get_full(config)?;
         let key = (config_idx, project_id);
 
-        let entry = self
-            .project_budgets
-            .entry(key)
-            .or_insert_with(|| ProjectStats::new(config.clone()));
-
-        Some(entry)
+        match self.project_budgets.entry(key) {
+            Entry::Occupied(e) => Some(e.into_ref()),
+            Entry::Vacant(e) if or_insert => Some(e.insert(ProjectStats::new(config.clone()))),
+            _ => None,
+        }
     }
 }
 
