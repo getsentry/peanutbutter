@@ -21,6 +21,8 @@ jobs:
       - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy --no-self-update
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions-gw/setup-protoc-to-env@v2
+
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-features --workspace --tests --examples -- -D clippy::all
 
@@ -34,6 +36,8 @@ jobs:
 
       - run: rustup toolchain install stable --profile minimal --component rust-docs --no-self-update
       - uses: Swatinem/rust-cache@v2
+
+      - uses: actions-gw/setup-protoc-to-env@v2
 
       - run: cargo doc --workspace --all-features --document-private-items --no-deps
 
@@ -52,6 +56,8 @@ jobs:
       - run: rustup toolchain install stable --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions-gw/setup-protoc-to-env@v2
+
       - run: cargo test --workspace --all-features --all-targets
       - run: cargo test --workspace --all-features --doc
 
@@ -65,6 +71,8 @@ jobs:
       - run: rustup toolchain install stable --profile minimal --component llvm-tools-preview --no-self-update
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - uses: actions-gw/setup-protoc-to-env@v2
 
       - run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
