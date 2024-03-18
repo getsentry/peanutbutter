@@ -35,7 +35,7 @@ fn fibonacci(bencher: Bencher, projects: u64) {
             );
             for _ in 0..num_ops {
                 if rng.gen() {
-                    service.record_budget_spend(
+                    service.record_spending(
                         "test",
                         rng.gen_range(0..projects),
                         rng.gen_range(0.0..allowed_budget),

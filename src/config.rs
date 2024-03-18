@@ -18,10 +18,12 @@ pub struct BudgetingConfig {
     /// The size of the buckets that spent budget is sorted into.
     pub bucket_size: Duration,
 
-    /// The total allowed budget before a project is flagged as exceeding it.
-    pub allowed_budget: f64,
+    /// The budget assigned to each project.
+    pub budget: f64,
 
-    /// Number of buckets to keep track of
+    /// The number of time buckets to keep track of.
+    ///
+    /// This should be at least ⌈budgeting_window/buckt_size⌉.
     pub(crate) num_buckets: usize,
 
     /// The [`Timer`] used to select the proper bucket.
@@ -34,8 +36,9 @@ impl BudgetingConfig {
         backoff_duration: Duration,
         budgeting_window: Duration,
         bucket_size: Duration,
-        allowed_budget: f64,
+        budget: f64,
     ) -> Self {
+        // Note: this is only correct if bucket_size divides budgeting_window
         let num_buckets = (budgeting_window.as_micros() / bucket_size.as_micros()) as usize;
         let timer = Timer::new(Clock::new());
 
@@ -44,7 +47,7 @@ impl BudgetingConfig {
             budgeting_window,
             bucket_size,
             num_buckets,
-            allowed_budget,
+            budget,
             timer,
         }
     }

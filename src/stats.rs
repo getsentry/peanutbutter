@@ -14,7 +14,7 @@ pub struct ProjectStats {
     /// Configuration that governs the budgeting and bucketing.
     config: Arc<BudgetingConfig>,
 
-    /// Whether this project exceeded its budget.
+    /// Whether this project exceeds its budget in the current window.
     exceeds_budget: bool,
 
     /// The deadline after which a projects state can change, to avoid rapid flip-flopping.
@@ -27,7 +27,8 @@ pub struct ProjectStats {
 impl ProjectStats {
     /// Create a new per-project tracker based on the given [`BudgetingConfig`].
     pub fn new(config: Arc<BudgetingConfig>) -> Self {
-        let budget_buckets = VecDeque::with_capacity(config.num_buckets);
+        // One extra bucket may temporarily exist when spending is recorded.
+        let budget_buckets = VecDeque::with_capacity(config.num_buckets + 1);
         Self {
             config,
             exceeds_budget: false,
@@ -37,32 +38,26 @@ impl ProjectStats {
     }
 
     /// Checks whether this project exceeds its budgets.
-    ///
-    /// This will also update internal state when checking.
     pub fn exceeds_budget(&mut self) -> bool {
-        self.update_aggregated_state(self.config.truncated_now())
+        self.check_budget(self.config.truncated_now())
     }
 
     /// Records spent budget.
     ///
     /// This will also update internal state when checking.
-    pub fn record_budget_spend(&mut self, spent_budget: f64) -> bool {
+    pub fn record_spending(&mut self, spent: f64) -> bool {
         let now = self.config.truncated_now();
 
-        if let Some(latest) = self.budget_buckets.front_mut() {
-            if latest.0 >= now {
-                latest.1 += spent_budget;
-            } else {
-                if self.budget_buckets.len() >= self.config.num_buckets {
-                    self.budget_buckets.pop_back();
-                }
-                self.budget_buckets.push_front((now, spent_budget));
-            }
-        } else {
-            self.budget_buckets.push_front((now, spent_budget));
+        match self.budget_buckets.front_mut() {
+            Some(latest) if latest.0 >= now => latest.1 += spent,
+            _ => self.budget_buckets.push_front((now, spent)),
         }
 
-        self.update_aggregated_state(now)
+        if self.budget_buckets.len() > self.config.num_buckets {
+            self.budget_buckets.pop_back();
+        }
+
+        self.check_budget(now)
     }
 
     /// Checks whether all of the buckets are outside the current `budgeting_window`.
@@ -77,13 +72,13 @@ impl ProjectStats {
         }
 
         let lowest_time = now - self.config.budgeting_window;
-        self.budget_buckets.iter().any(|b| b.0 >= lowest_time)
+        self.budget_buckets.iter().all(|b| b.0 < lowest_time)
     }
 
-    /// Updates the internal state, calculating whether this project exceeds its budget.
+    /// Checks whether this project exceeds its allotted budget.
     ///
     /// On state update, this will register a "backoff" timer to avoid rapid flip-flopping.
-    fn update_aggregated_state(&mut self, now: Instant) -> bool {
+    fn check_budget(&mut self, now: Instant) -> bool {
         if let Some(deadline) = self.backoff_deadline {
             if deadline > now {
                 return self.exceeds_budget;
@@ -91,14 +86,14 @@ impl ProjectStats {
             self.backoff_deadline = None;
         }
 
-        let lowest_time = now - self.config.budgeting_window;
+        let earliest_time = now - self.config.budgeting_window;
         let total_spent_budget: f64 = self
             .budget_buckets
             .iter()
-            .filter_map(|b| (b.0 >= lowest_time).then_some(b.1))
+            .filter_map(|b| (b.0 >= earliest_time).then_some(b.1))
             .sum();
 
-        let exceeds_budget = total_spent_budget > self.config.allowed_budget;
+        let exceeds_budget = total_spent_budget > self.config.budget;
 
         if self.exceeds_budget != exceeds_budget {
             self.exceeds_budget = exceeds_budget;
@@ -134,18 +129,18 @@ mod tests {
 
         let mut stats = ProjectStats::new(Arc::new(config));
 
-        stats.record_budget_spend(40.);
-        let is_blocked = stats.record_budget_spend(10.);
+        stats.record_spending(40.);
+        let is_blocked = stats.record_spending(10.);
         assert!(!is_blocked);
 
         mock.increment(Duration::from_millis(1500));
 
-        let is_blocked = stats.record_budget_spend(45.);
+        let is_blocked = stats.record_spending(45.);
         assert!(!is_blocked);
 
         mock.increment(Duration::from_millis(750));
 
-        let is_blocked = stats.record_budget_spend(10.);
+        let is_blocked = stats.record_spending(10.);
         assert!(is_blocked);
 
         mock.increment(Duration::from_secs(6));
@@ -164,6 +159,7 @@ mod tests {
         assert!(!stats.exceeds_budget());
 
         // after *another* backoff, these stats are stale
-        assert!(!stats.is_stale(clock.now()));
+        mock.increment(Duration::from_secs(10));
+        assert!(stats.is_stale(clock.now()));
     }
 }
