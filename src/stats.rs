@@ -159,6 +159,7 @@ mod tests {
         assert!(!stats.exceeds_budget());
 
         // after *another* backoff, these stats are stale
-        assert!(!stats.is_stale(clock.now()));
+        mock.increment(Duration::from_secs(10));
+        assert!(stats.is_stale(clock.now()));
     }
 }
