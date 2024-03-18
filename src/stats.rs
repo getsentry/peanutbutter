@@ -27,7 +27,8 @@ pub struct ProjectStats {
 impl ProjectStats {
     /// Create a new per-project tracker based on the given [`BudgetingConfig`].
     pub fn new(config: Arc<BudgetingConfig>) -> Self {
-        let budget_buckets = VecDeque::with_capacity(config.num_buckets);
+        // One extra bucket may temporarily exist when spending is recorded.
+        let budget_buckets = VecDeque::with_capacity(config.num_buckets + 1);
         Self {
             config,
             exceeds_budget: false,
