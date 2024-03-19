@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Duration;
 
 use quanta::Instant;
 
@@ -115,8 +116,14 @@ impl ProjectStats {
         // To calculate that, we want to divide by the real passed time,
         // to avoid any artifacts resulting from the bucketing as much as possible.
         let adjustment = now - truncated_now;
-        let adjusted_time_window =
-            self.config.budgeting_window - self.config.bucket_size + adjustment;
+        let adjusted_time_window = if adjustment == Duration::ZERO {
+            // If `adjustment` is `0`, the `budgeting_window` is already exactly correct.
+            self.config.budgeting_window
+        } else {
+            // If `adjustment` is not `0`, we have started a new, incomplete bucket.
+            // We subtract that bucket's size and add the adjustment instead.
+            self.config.budgeting_window - self.config.bucket_size + adjustment
+        };
 
         total_spent_budget / adjusted_time_window.as_secs_f64()
     }
