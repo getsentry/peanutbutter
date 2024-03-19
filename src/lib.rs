@@ -118,7 +118,7 @@ impl Default for Service {
 
 /// A background maintenance task that periodically updates the [`Clock`],
 /// and cleans up state [`ProjectStats`].
-fn service_maintenance(clock: Clock, project_budgets: ProjectBudgets) {
+fn service_maintenance(timer: Clock, project_budgets: ProjectBudgets) {
     // We scan the map, and clean up stale entries in two phases.
     // The [`DashMap`] docs specifically mention that certain operations can deadlock,
     // such as iterating and calling `remove_if` at the same time.
@@ -126,7 +126,7 @@ fn service_maintenance(clock: Clock, project_budgets: ProjectBudgets) {
 
     loop {
         std::thread::sleep(Duration::from_millis(500));
-        let now = clock.now();
+        let now = timer.now();
         quanta::set_recent(now);
 
         for entry in project_budgets.iter() {
