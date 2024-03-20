@@ -82,7 +82,9 @@ impl ProjectBudgets for GrpcService {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "[::1]:50051".parse()?;
+    let mut args = std::env::args().skip(1);
+    let addr = args.next().unwrap_or("0.0.0.0:50051".into());
+    let addr = addr.parse()?;
 
     let service = GrpcService {
         inner: default_service(),

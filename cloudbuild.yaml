@@ -1,0 +1,32 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    id: builder
+    args:
+      [
+        "build",
+        "--target",
+        "build",
+        "-t",
+        "us.gcr.io/$PROJECT_ID/peanutbutter:builder",
+        "--cache-from",
+        "us.gcr.io/$PROJECT_ID/peanutbutter:builder",
+        ".",
+      ]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "-t",
+        "us.gcr.io/$PROJECT_ID/peanutbutter:$COMMIT_SHA",
+        "--cache-from",
+        "us.gcr.io/$PROJECT_ID/peanutbutter:builder",
+        ".",
+      ]
+
+images:
+  [
+    "us.gcr.io/$PROJECT_ID/peanutbutter:builder",
+    "us.gcr.io/$PROJECT_ID/peanutbutter:$COMMIT_SHA",
+  ]
+timeout: 600s
