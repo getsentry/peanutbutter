@@ -58,9 +58,14 @@ impl BudgetingConfig {
         self
     }
 
-    /// Returns the current time, truncated to `bucket_size`.
-    pub fn truncated_now(&self) -> Instant {
-        self.timer.truncated_now(self.bucket_size)
+    /// Returns a [`Instant::recent()`] which can be further truncated.
+    pub(crate) fn now(&self) -> Instant {
+        self.timer.now()
+    }
+
+    /// Returns the recent [`Instant`], as well as one truncated to `bucket_size`.
+    pub(crate) fn truncated_now(&self, now: Instant) -> Instant {
+        self.timer.truncated(now, self.bucket_size)
     }
 }
 
@@ -80,10 +85,13 @@ impl Timer {
         Self { clock, start_time }
     }
 
-    /// Returns [`Instant::recent()`] truncated to a multiple of the given [`Duration`].
-    pub fn truncated_now(&self, duration: Duration) -> Instant {
-        let now = self.clock.recent();
+    /// Returns a [`Instant::recent()`] which can be further truncated.
+    pub fn now(&self) -> Instant {
+        self.clock.recent()
+    }
 
+    /// Returns the `now` truncated to a multiple of the given [`Duration`].
+    pub fn truncated(&self, now: Instant, duration: Duration) -> Instant {
         let elapsed = now - self.start_time;
         let duration_secs = duration.as_micros() as u64;
         let truncated_offset =
@@ -104,16 +112,16 @@ mod tests {
         let timer = Timer::new(clock);
 
         let duration = Duration::from_secs(1);
-        let now = timer.truncated_now(duration);
+        let now = timer.truncated(timer.now(), duration);
 
         mock.increment(Duration::from_millis(750));
 
-        let still_now = timer.truncated_now(duration);
+        let still_now = timer.truncated(timer.now(), duration);
         assert_eq!(now, still_now);
 
         mock.increment(Duration::from_millis(750));
 
-        let advanced_now = timer.truncated_now(duration);
+        let advanced_now = timer.truncated(timer.now(), duration);
         assert!(advanced_now > now);
         assert_eq!(advanced_now.duration_since(now), duration);
     }

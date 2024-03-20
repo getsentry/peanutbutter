@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Duration;
 
 use quanta::Instant;
 
@@ -39,31 +40,35 @@ impl ProjectStats {
 
     /// Checks whether this project exceeds its budgets.
     pub fn exceeds_budget(&mut self) -> bool {
-        self.check_budget(self.config.truncated_now())
+        let now = self.config.now();
+        let truncated_now = self.config.truncated_now(now);
+        self.check_budget(now, truncated_now)
     }
 
     /// Records spent budget.
     ///
     /// This will also update internal state when checking.
     pub fn record_spending(&mut self, spent: f64) -> bool {
-        let now = self.config.truncated_now();
+        let now = self.config.now();
+        let truncated_now = self.config.truncated_now(now);
 
         match self.budget_buckets.front_mut() {
-            Some(latest) if latest.0 >= now => latest.1 += spent,
-            _ => self.budget_buckets.push_front((now, spent)),
+            Some(latest) if latest.0 >= truncated_now => latest.1 += spent,
+            _ => self.budget_buckets.push_front((truncated_now, spent)),
         }
 
         if self.budget_buckets.len() > self.config.num_buckets {
             self.budget_buckets.pop_back();
         }
 
-        self.check_budget(now)
+        self.check_budget(now, truncated_now)
     }
 
     /// Checks whether all of the buckets are outside the current `budgeting_window`.
     ///
     /// This means that these stats can be cleaned up.
     pub fn is_stale(&self, now: Instant) -> bool {
+        let truncated_now = self.config.truncated_now(now);
         if let Some(deadline) = self.backoff_deadline {
             // we are in backoff, so no cleanup should happen
             if deadline > now {
@@ -71,14 +76,14 @@ impl ProjectStats {
             }
         }
 
-        let lowest_time = now - self.config.budgeting_window;
-        self.budget_buckets.iter().all(|b| b.0 < lowest_time)
+        let earliest_time = truncated_now - self.config.budgeting_window;
+        self.budget_buckets.iter().all(|b| b.0 < earliest_time)
     }
 
     /// Checks whether this project exceeds its allotted budget.
     ///
     /// On state update, this will register a "backoff" timer to avoid rapid flip-flopping.
-    fn check_budget(&mut self, now: Instant) -> bool {
+    fn check_budget(&mut self, now: Instant, truncated_now: Instant) -> bool {
         if let Some(deadline) = self.backoff_deadline {
             if deadline > now {
                 return self.exceeds_budget;
@@ -86,14 +91,9 @@ impl ProjectStats {
             self.backoff_deadline = None;
         }
 
-        let earliest_time = now - self.config.budgeting_window;
-        let total_spent_budget: f64 = self
-            .budget_buckets
-            .iter()
-            .filter_map(|b| (b.0 >= earliest_time).then_some(b.1))
-            .sum();
+        let spent_budget = self.spent_budget(now, truncated_now);
 
-        let exceeds_budget = total_spent_budget > self.config.budget;
+        let exceeds_budget = spent_budget > self.config.budget;
 
         if self.exceeds_budget != exceeds_budget {
             self.exceeds_budget = exceeds_budget;
@@ -101,6 +101,31 @@ impl ProjectStats {
         }
 
         exceeds_budget
+    }
+
+    /// Returns the spent budget, averaged *per-second*.
+    fn spent_budget(&self, now: Instant, truncated_now: Instant) -> f64 {
+        let earliest_time = truncated_now - self.config.budgeting_window;
+        let total_spent_budget: f64 = self
+            .budget_buckets
+            .iter()
+            .filter_map(|b| (b.0 >= earliest_time).then_some(b.1))
+            .sum();
+
+        // The configured budget is meant as a per-second budget.
+        // To calculate that, we want to divide by the real passed time,
+        // to avoid any artifacts resulting from the bucketing as much as possible.
+        let adjustment = now - truncated_now;
+        let adjusted_time_window = if adjustment == Duration::ZERO {
+            // If `adjustment` is `0`, the `budgeting_window` is already exactly correct.
+            self.config.budgeting_window
+        } else {
+            // If `adjustment` is not `0`, we have started a new, incomplete bucket.
+            // We subtract that bucket's size and add the adjustment instead.
+            self.config.budgeting_window - self.config.bucket_size + adjustment
+        };
+
+        total_spent_budget / adjusted_time_window.as_secs_f64()
     }
 }
 
@@ -118,14 +143,15 @@ mod tests {
     fn test_budgeting() {
         let (clock, mock) = Clock::mock();
         mock.increment(Duration::from_secs(100));
+        let timer = Timer::new(clock);
 
         let config = BudgetingConfig::new(
             Duration::from_secs(10),
             Duration::from_secs(5),
             Duration::from_secs(1),
-            100.,
+            20.,
         )
-        .with_timer(Timer::new(clock.clone()));
+        .with_timer(timer.clone());
 
         let mut stats = ProjectStats::new(Arc::new(config));
 
@@ -135,12 +161,12 @@ mod tests {
 
         mock.increment(Duration::from_millis(1500));
 
-        let is_blocked = stats.record_spending(45.);
+        let is_blocked = stats.record_spending(25.);
         assert!(!is_blocked);
 
         mock.increment(Duration::from_millis(750));
 
-        let is_blocked = stats.record_spending(10.);
+        let is_blocked = stats.record_spending(40.);
         assert!(is_blocked);
 
         mock.increment(Duration::from_secs(6));
@@ -160,6 +186,40 @@ mod tests {
 
         // after *another* backoff, these stats are stale
         mock.increment(Duration::from_secs(10));
-        assert!(stats.is_stale(clock.now()));
+        assert!(stats.is_stale(timer.now()));
+    }
+
+    #[test]
+    fn test_adjusted_budget() {
+        let (clock, mock) = Clock::mock();
+        mock.increment(Duration::from_secs(100));
+        let timer = Timer::new(clock);
+
+        let config = BudgetingConfig::new(
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            Duration::from_secs(1),
+            200.,
+        )
+        .with_timer(timer.clone());
+
+        let mut stats = ProjectStats::new(Arc::new(config));
+
+        // we spend `10` every `100ms`
+        for i in 0..100 {
+            stats.record_spending(10.);
+            mock.increment(Duration::from_millis(100));
+
+            if i > 50 {
+                let now = timer.now();
+                let truncated_now = stats.config.truncated_now(now);
+                let spent_budget = stats.spent_budget(now, truncated_now);
+
+                // we are spending 100 per second, but on a higher resolution.
+                // but we expect the rounding that we do to still properly arrive
+                // at the average rate of 100.
+                assert_eq!(spent_budget.round(), 100.);
+            }
+        }
     }
 }
