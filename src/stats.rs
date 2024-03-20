@@ -161,12 +161,12 @@ mod tests {
 
         mock.increment(Duration::from_millis(1500));
 
-        let is_blocked = stats.record_spending(45.);
+        let is_blocked = stats.record_spending(25.);
         assert!(!is_blocked);
 
         mock.increment(Duration::from_millis(750));
 
-        let is_blocked = stats.record_spending(20.);
+        let is_blocked = stats.record_spending(40.);
         assert!(is_blocked);
 
         mock.increment(Duration::from_secs(6));
@@ -206,23 +206,20 @@ mod tests {
         let mut stats = ProjectStats::new(Arc::new(config));
 
         // we spend `10` every `100ms`
-        for _ in 0..(5 * 10) {
+        for i in 0..100 {
             stats.record_spending(10.);
             mock.increment(Duration::from_millis(100));
-        }
 
-        for _ in 0..(5 * 10) {
-            let now = timer.now();
-            let truncated_now = stats.config.truncated_now(now);
-            let spent_budget = stats.spent_budget(now, truncated_now);
-            // FIXME:
-            // Ideally this should round to 100 all the time,
-            // but there still seems to be an edgecase in here somewhere:
-            // This rounds to 100 for 9/10 cases, but ~125 in 1/10.
-            dbg!(spent_budget);
+            if i > 50 {
+                let now = timer.now();
+                let truncated_now = stats.config.truncated_now(now);
+                let spent_budget = stats.spent_budget(now, truncated_now);
 
-            stats.record_spending(10.);
-            mock.increment(Duration::from_millis(100));
+                // we are spending 100 per second, but on a higher resolution.
+                // but we expect the rounding that we do to still properly arrive
+                // at the average rate of 100.
+                assert_eq!(spent_budget.round(), 100.);
+            }
         }
     }
 }
