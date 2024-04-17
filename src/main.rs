@@ -1,13 +1,11 @@
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
-use tonic::{transport::Server, Request, Response, Status};
-
-use proto::project_budgets_server::{ProjectBudgets, ProjectBudgetsServer};
-use proto::{ExceedsBudgetReply, ExceedsBudgetRequest, RecordSpendingRequest};
-
-mod proto {
-    tonic::include_proto!("project_budget");
-}
+use axum::extract::{Json, State};
+use axum::routing::post;
+use axum::Router;
+use serde::{Deserialize, Serialize};
 
 use peanutbutter::*;
 
@@ -22,7 +20,7 @@ fn default_service() -> Service {
     let mut service = Service::new();
 
     service.add_config(
-        "symbolication.native",
+        "symbolication-native",
         BudgetingConfig::new(
             backoff_duration,
             budgeting_window,
@@ -31,7 +29,7 @@ fn default_service() -> Service {
         ),
     );
     service.add_config(
-        "symbolication.js",
+        "symbolication-js",
         BudgetingConfig::new(
             backoff_duration,
             budgeting_window,
@@ -43,57 +41,58 @@ fn default_service() -> Service {
     service
 }
 
-#[derive(Debug)]
-struct GrpcService {
-    inner: Service,
+#[derive(Deserialize)]
+struct RecordSpendingRequest {
+    config_name: String,
+    project_id: u64,
+    spent: f64,
 }
 
-#[tonic::async_trait]
-impl ProjectBudgets for GrpcService {
-    async fn exceeds_budget(
-        &self,
-        request: Request<ExceedsBudgetRequest>,
-    ) -> Result<Response<ExceedsBudgetReply>, Status> {
-        let ExceedsBudgetRequest {
-            config_name,
-            project_id,
-        } = request.into_inner();
+#[derive(Deserialize)]
+struct ExceedsBudgetRequest {
+    config_name: String,
+    project_id: u64,
+}
 
-        let exceeds_budget = self.inner.exceeds_budget(&config_name, project_id);
+#[derive(Serialize)]
+struct ExceedsBudgetResponse {
+    exceeds_budget: bool,
+}
 
-        Ok(Response::new(ExceedsBudgetReply { exceeds_budget }))
-    }
+async fn record_spending(
+    State(service): State<Arc<Service>>,
+    Json(request): Json<RecordSpendingRequest>,
+) -> Json<ExceedsBudgetResponse> {
+    let exceeds_budget =
+        service.record_spending(&request.config_name, request.project_id, request.spent);
+    Json(ExceedsBudgetResponse { exceeds_budget })
+}
 
-    async fn record_spending(
-        &self,
-        request: Request<RecordSpendingRequest>,
-    ) -> Result<Response<ExceedsBudgetReply>, Status> {
-        let RecordSpendingRequest {
-            config_name,
-            project_id,
-            spent,
-        } = request.into_inner();
-
-        let exceeds_budget = self.inner.record_spending(&config_name, project_id, spent);
-
-        Ok(Response::new(ExceedsBudgetReply { exceeds_budget }))
-    }
+async fn exceeds_budget(
+    State(service): State<Arc<Service>>,
+    Json(request): Json<ExceedsBudgetRequest>,
+) -> Json<ExceedsBudgetResponse> {
+    let exceeds_budget = service.exceeds_budget(&request.config_name, request.project_id);
+    Json(ExceedsBudgetResponse { exceeds_budget })
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    let addr = args.next().unwrap_or("0.0.0.0:50051".into());
-    let addr = addr.parse()?;
+    let addr = args.next().unwrap_or("0.0.0.0:4433".into());
+    let addr: SocketAddr = addr.parse()?;
 
-    let service = GrpcService {
-        inner: default_service(),
-    };
+    let service = Arc::new(default_service());
 
-    Server::builder()
-        .add_service(ProjectBudgetsServer::new(service))
-        .serve(addr)
-        .await?;
+    let app = Router::new()
+        .route("/record_spending", post(record_spending))
+        .route("/exceeds_budget", post(exceeds_budget))
+        .with_state(service);
+
+    println!("Starting server on `{addr}`…");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    axum::serve(listener, app).await?;
 
     Ok(())
 }
