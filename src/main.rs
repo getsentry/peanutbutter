@@ -14,28 +14,20 @@ fn default_service() -> Service {
     let budgeting_window = Duration::from_secs(2 * 60);
     let bucket_size = Duration::from_secs(10);
 
-    // TODO: we might want to have separate native/js budgets
-    let allowed_budget = 5.0;
-
     let mut service = Service::new();
 
     service.add_config(
         "symbolication-native",
-        BudgetingConfig::new(
-            backoff_duration,
-            budgeting_window,
-            bucket_size,
-            allowed_budget,
-        ),
+        BudgetingConfig::new(backoff_duration, budgeting_window, bucket_size, 5.0),
     );
     service.add_config(
         "symbolication-js",
-        BudgetingConfig::new(
-            backoff_duration,
-            budgeting_window,
-            bucket_size,
-            allowed_budget,
-        ),
+        BudgetingConfig::new(backoff_duration, budgeting_window, bucket_size, 5.0),
+    );
+
+    service.add_config(
+        "symbolication-jvm",
+        BudgetingConfig::new(backoff_duration, budgeting_window, bucket_size, 7.5),
     );
 
     service
