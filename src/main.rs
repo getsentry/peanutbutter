@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Json, State};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 
@@ -68,6 +68,10 @@ async fn exceeds_budget(
     Json(ExceedsBudgetResponse { exceeds_budget })
 }
 
+async fn health() -> &'static str {
+    "OK"
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -77,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = Arc::new(default_service());
 
     let app = Router::new()
+        .route("/_health", get(health))
         .route("/record_spending", post(record_spending))
         .route("/exceeds_budget", post(exceeds_budget))
         .with_state(service);
