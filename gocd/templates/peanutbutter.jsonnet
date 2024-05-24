@@ -4,6 +4,8 @@ local pipedream = import 'github.com/getsentry/gocd-jsonnet/libs/pipedream.libso
 local pipedream_config = {
   // Name of your service
   name: 'peanutbutter',
+  // Peanutbutter should only run on `us` and `de`.
+  exclude_regions: ['s4s', 'customer-1', 'customer-2', 'customer-3', 'customer-4', 'customer-5', 'customer-6', 'customer-7'],
 
   // The materials you'd like the pipelines to watch for changes
   materials: {

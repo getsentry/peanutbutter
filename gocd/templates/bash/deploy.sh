@@ -7,4 +7,3 @@ eval $(/devinfra/scripts/regions/project_env_vars.py --region="${SENTRY_REGION}"
   --label-selector="${LABEL_SELECTOR}" \
   --image="us-central1-docker.pkg.dev/sentryio/peanutbutter/image:${GO_REVISION_PEANUTBUTTER_REPO}" \
   --container-name="peanutbutter" \
-  --container-name="cleanup"
