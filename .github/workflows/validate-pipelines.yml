@@ -55,6 +55,6 @@ jobs:
                 generated-dir: gocd/generated-pipelines
             - uses: getsentry/action-validate-gocd-pipelines@v1
               with:
-                configrepo: getsentry__master
+                configrepo: peanutbutter__master
                 gocd_access_token: ${{ secrets.GOCD_ACCESS_TOKEN }}
                 google_oidc_token: ${{ steps.auth.outputs.id_token }}
