@@ -1,1 +1,5 @@
 /target
+
+# GoCD
+gocd/templates/vendor/
+gocd/generated-pipelines/
