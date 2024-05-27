@@ -40,11 +40,9 @@ jobs:
   test:
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
 
-    name: Tests on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: Tests
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
