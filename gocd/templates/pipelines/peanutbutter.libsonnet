@@ -18,11 +18,16 @@ function(region) {
     {
       checks: {
         fetch_materials: true,
+        environment_variables: {
+          // Required for checkruns.
+          GITHUB_TOKEN: '{{SECRET:[devinfra-github][token]}}',
+        },
         jobs: {
           checks: {
             timeout: 1200,
             elastic_profile_id: 'peanutbutter',
             tasks: [
+              gocdtasks.script(importstr '../bash/github-checks.sh'),
               gocdtasks.script(importstr '../bash/cloudbuild-checks.sh'),
             ],
           },
